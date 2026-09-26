@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!-- ST-008-01: accounts table -->
+    <changeSet id="20250115000001-001" author="payment-service">
+        <createTable tableName="accounts">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="owner_user_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="balance" type="NUMERIC(19,4)" defaultValueNumeric="0.0000">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE accounts ADD CONSTRAINT chk_accounts_balance_non_negative CHECK (balance >= 0)</sql>
+        <rollback>
+            <dropTable tableName="accounts"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ST-008-02: transactions table -->
+    <changeSet id="20250115000001-002" author="payment-service">
+        <createTable tableName="transactions">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="idempotency_key" type="VARCHAR(64)">
+                <constraints nullable="true" unique="true" uniqueConstraintName="uq_transactions_idempotency_key"/>
+            </column>
+            <column name="sender_account_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_transactions_sender"
+                             references="accounts(id)"/>
+            </column>
+            <column name="receiver_account_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_transactions_receiver"
+                             references="accounts(id)"/>
+            </column>
+            <column name="amount" type="NUMERIC(19,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="VARCHAR(16)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reversal_of_transaction_id" type="UUID">
+                <constraints nullable="true"
+                             foreignKeyName="fk_transactions_reversal_of"
+                             references="transactions(id)"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE transactions ADD CONSTRAINT chk_transactions_status
+            CHECK (status IN ('PENDING','COMPLETED','FAILED','REVERSED'))</sql>
+        <createIndex tableName="transactions" indexName="idx_transactions_sender_account_id">
+            <column name="sender_account_id"/>
+        </createIndex>
+        <createIndex tableName="transactions" indexName="idx_transactions_receiver_account_id">
+            <column name="receiver_account_id"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="transactions"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ST-008-03: ledger_entries table -->
+    <changeSet id="20250115000001-003" author="payment-service">
+        <createTable tableName="ledger_entries">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="transaction_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_ledger_entries_transaction"
+                             references="transactions(id)"/>
+            </column>
+            <column name="account_id" type="UUID">
+                <constraints nullable="false"
+                             foreignKeyName="fk_ledger_entries_account"
+                             references="accounts(id)"/>
+            </column>
+            <column name="entry_type" type="VARCHAR(6)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="NUMERIC(19,4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="initiating_user_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="request_timestamp" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reversal_of_entry_id" type="UUID">
+                <constraints nullable="true"
+                             foreignKeyName="fk_ledger_entries_reversal_of"
+                             references="ledger_entries(id)"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE ledger_entries ADD CONSTRAINT chk_ledger_entries_entry_type
+            CHECK (entry_type IN ('DEBIT','CREDIT'))</sql>
+        <createIndex tableName="ledger_entries" indexName="idx_ledger_entries_transaction_id">
+            <column name="transaction_id"/>
+        </createIndex>
+        <rollback>
+            <dropTable tableName="ledger_entries"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ST-008-04: idempotency_keys table -->
+    <changeSet id="20250115000001-004" author="payment-service">
+        <createTable tableName="idempotency_keys">
+            <column name="key" type="VARCHAR(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="payload_hash" type="VARCHAR(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="transaction_id" type="UUID">
+                <constraints nullable="true"
+                             foreignKeyName="fk_idempotency_keys_transaction"
+                             references="transactions(id)"/>
+            </column>
+            <column name="status" type="VARCHAR(12)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <column name="response_payload" type="JSONB">
+                <constraints nullable="true"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="TIMESTAMPTZ">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <sql>ALTER TABLE idempotency_keys ADD CONSTRAINT chk_idempotency_keys_status
+            CHECK (status IN ('PENDING','COMPLETED','FAILED'))</sql>
+        <rollback>
+            <dropTable tableName="idempotency_keys"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ST-003-04 / ST-008-05: composite index on ledger_entries for history + point-in-time balance -->
+    <changeSet id="20250115000001-005" author="payment-service">
+        <createIndex tableName="ledger_entries" indexName="idx_ledger_account_timestamp">
+            <column name="account_id"/>
+            <column name="request_timestamp" descending="true"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="ledger_entries" indexName="idx_ledger_account_timestamp"/>
+        </rollback>
+    </changeSet>
+
+    <!-- TTL cleanup index on idempotency_keys -->
+    <changeSet id="20250115000001-006" author="payment-service">
+        <createIndex tableName="idempotency_keys" indexName="idx_idempotency_expires_at">
+            <column name="expires_at"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="idempotency_keys" indexName="idx_idempotency_expires_at"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

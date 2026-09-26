@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Payment Service — Initial Schema
+        SDD Reference: SDD-20250115-001 §10.2, §10.3
+        Author: technical-architect-agent
+        Date:   2025-01-15
+
+        Tables created (in dependency order):
+          1. accounts
+          2. transactions
+          3. ledger_entries
+          4. idempotency_keys
+          5. idx_ledger_account_timestamp (composite index)
+          6. idx_idempotency_expires_at   (TTL cleanup index)
+
+        Rollback: drop tables in reverse dependency order.
+        Every changeset is idempotent via Liquibase checksums;
+        do NOT edit committed changesets — add new changesets instead.
+    -->
+
+    <!-- ================================================================
+         CHANGESET 001 — accounts table
+         Stores wallet accounts. balance is the denormalised cache of the
+         current balance derived from ledger_entries. The CHECK constraint
+         is a DB-level guard against negative balances (REQ-F-013).
+         ================================================================ -->
+    <changeSet id="20250115000001-001" author="technical-architect-agent">
+        <createTable tableName="accounts" remarks="Wallet accounts; balance is a denormalised ledger cache.">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="pk_accounts"/>
+            </column>
+            <column name="owner_user_id" type="UUID">
+                <constraints nullable="false"/>
+            </column>
+            <column name="balance" type="NUMERIC(19, 4)" defaultValueNumeric="0.0000">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- balance >= 0 enforced at DB level (REQ-F-013) -->
+        <sql>
+            ALTER TABLE accounts
+            ADD CONSTRAINT chk_accounts_balance_non_negative CHECK (balance >= 0);
+        </sql>
+
+        <rollback>
+            <dropTable tableName="accounts"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ================================================================
+         CHANGESET 002 — transactions table
+         One row per transfer or reversal event. status is constrained to
+         the valid lifecycle values (REQ-F-024).
+         ================================================================ -->
+    <changeSet id="20250115000001-002" author="technical-architect-agent">
+        <createTable tableName="transactions" remarks="Transfer and reversal transactions.">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="pk_transactions"/>
+            </column>
+            <column name="idempotency_key" type="VARCHAR(64)" remarks="Denormalised from idempotency_keys for audit convenience.">
+                <constraints nullable="true" unique="true" uniqueConstraintName="uq_transactions_idempotency_key"/>
+            </column>
+            <column name="sender_account_id" type="UUID">
+                <constraints nullable="false" foreignKeyName="fk_transactions_sender" references="accounts(id)"/>
+            </column>
+            <column name="receiver_account_id" type="UUID">
+                <constraints nullable="false" foreignKeyName="fk_transactions_receiver" references="accounts(id)"/>
+            </column>
+            <column name="amount" type="NUMERIC(19, 4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="VARCHAR(16)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reversal_of_transaction_id" type="UUID"
+                   remarks="FK to the original transaction for reversal rows. NULL for forward transfers.">
+                <constraints nullable="true" foreignKeyName="fk_transactions_reversal_of" references="transactions(id)"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- status constrained to valid lifecycle enum values (REQ-F-024) -->
+        <sql>
+            ALTER TABLE transactions
+            ADD CONSTRAINT chk_transactions_status
+            CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED', 'REVERSED'));
+        </sql>
+
+        <!-- amount must be positive -->
+        <sql>
+            ALTER TABLE transactions
+            ADD CONSTRAINT chk_transactions_amount_positive CHECK (amount > 0);
+        </sql>
+
+        <!-- Indexes for FK lookups -->
+        <createIndex tableName="transactions" indexName="idx_transactions_sender_account_id">
+            <column name="sender_account_id"/>
+        </createIndex>
+        <createIndex tableName="transactions" indexName="idx_transactions_receiver_account_id">
+            <column name="receiver_account_id"/>
+        </createIndex>
+
+        <rollback>
+            <dropTable tableName="transactions"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ================================================================
+         CHANGESET 003 — ledger_entries table
+         Insert-only journal entries. The application DB user is granted
+         SELECT and INSERT only — no UPDATE or DELETE.
+         entry_type is constrained to DEBIT or CREDIT.
+         reversal_of_entry_id links reversal entries to original entries
+         (REQ-F-027).
+         ================================================================ -->
+    <changeSet id="20250115000001-003" author="technical-architect-agent">
+        <createTable tableName="ledger_entries" remarks="Immutable double-entry journal. INSERT only — no UPDATE or DELETE permitted.">
+            <column name="id" type="UUID">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="pk_ledger_entries"/>
+            </column>
+            <column name="transaction_id" type="UUID">
+                <constraints nullable="false" foreignKeyName="fk_ledger_transaction" references="transactions(id)"/>
+            </column>
+            <column name="account_id" type="UUID">
+                <constraints nullable="false" foreignKeyName="fk_ledger_account" references="accounts(id)"/>
+            </column>
+            <column name="entry_type" type="VARCHAR(6)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="amount" type="NUMERIC(19, 4)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="currency" type="VARCHAR(3)" defaultValue="USD">
+                <constraints nullable="false"/>
+            </column>
+            <column name="initiating_user_id" type="UUID" remarks="X-User-Id header value from the originating request (REQ-F-015, REQ-NF-010).">
+                <constraints nullable="false"/>
+            </column>
+            <column name="request_timestamp" type="TIMESTAMPTZ" defaultValueComputed="NOW()"
+                    remarks="Timestamp of the originating transfer request.">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reversal_of_entry_id" type="UUID"
+                   remarks="FK to original ledger entry for reversal entries. NULL for non-reversal entries (REQ-F-027).">
+                <constraints nullable="true" foreignKeyName="fk_ledger_reversal_of" references="ledger_entries(id)"/>
+            </column>
+        </createTable>
+
+        <!-- entry_type constrained to DEBIT or CREDIT (REQ-F-015) -->
+        <sql>
+            ALTER TABLE ledger_entries
+            ADD CONSTRAINT chk_ledger_entry_type
+            CHECK (entry_type IN ('DEBIT', 'CREDIT'));
+        </sql>
+
+        <!-- amount must be positive -->
+        <sql>
+            ALTER TABLE ledger_entries
+            ADD CONSTRAINT chk_ledger_amount_positive CHECK (amount > 0);
+        </sql>
+
+        <!--
+            DB-level immutability: revoke UPDATE and DELETE from application user.
+            Replace 'payment_app_user' with the actual application DB role.
+            TODO: parameterise with ${db.app.user} property in liquibase.properties
+        -->
+        <sql>
+            REVOKE UPDATE, DELETE ON ledger_entries FROM payment_app_user;
+        </sql>
+
+        <rollback>
+            <sql>GRANT UPDATE, DELETE ON ledger_entries TO payment_app_user;</sql>
+            <dropTable tableName="ledger_entries"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ================================================================
+         CHANGESET 004 — idempotency_keys table
+         Provides exactly-once semantics for transfer requests (ADR-003).
+         The UNIQUE constraint on 'key' is the atomic insertion gate.
+         expires_at drives the TTL cleanup job.
+         ================================================================ -->
+    <changeSet id="20250115000001-004" author="technical-architect-agent">
+        <createTable tableName="idempotency_keys" remarks="Idempotency key records for exactly-once transfer execution (ADR-003).">
+            <column name="key" type="VARCHAR(64)" remarks="Client-supplied UUID v4 idempotency key (REQ-F-007).">
+                <constraints primaryKey="true" nullable="false" primaryKeyName="pk_idempotency_keys"/>
+            </column>
+            <column name="payload_hash" type="VARCHAR(64)"
+                   remarks="SHA-256 hex of canonical request fields: {senderAccountId}|{receiverAccountId}|{amount} (REQ-F-010).">
+                <constraints nullable="false"/>
+            </column>
+            <column name="transaction_id" type="UUID"
+                   remarks="Resolved transaction ID; set when status transitions to COMPLETED.">
+                <constraints nullable="true" foreignKeyName="fk_idempotency_transaction" references="transactions(id)"/>
+            </column>
+            <column name="status" type="VARCHAR(12)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <column name="response_payload" type="JSONB"
+                   remarks="Cached serialised TransferResponse for idempotent replay (REQ-F-008).">
+                <constraints nullable="true"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="TIMESTAMPTZ"
+                   remarks="Record expires at created_at + app.idempotency.ttl-hours (default 24h, REQ-F-011).">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- status constrained to valid values -->
+        <sql>
+            ALTER TABLE idempotency_keys
+            ADD CONSTRAINT chk_idempotency_status
+            CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED'));
+        </sql>
+
+        <rollback>
+            <dropTable tableName="idempotency_keys"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ================================================================
+         CHANGESET 005 — composite index on ledger_entries
+         Supports paginated transaction history queries and point-in-time
+         balance calculation (REQ-F-020, REQ-F-019, REQ-NF-016).
+         ================================================================ -->
+    <changeSet id="20250115000001-005" author="technical-architect-agent">
+        <sql>
+            CREATE INDEX idx_ledger_account_timestamp
+            ON ledger_entries (account_id, request_timestamp DESC);
+        </sql>
+
+        <rollback>
+            <sql>DROP INDEX IF EXISTS idx_ledger_account_timestamp;</sql>
+        </rollback>
+    </changeSet>
+
+    <!-- ================================================================
+         CHANGESET 006 — index on idempotency_keys.expires_at
+         Enables efficient range-scan deletion in the TTL cleanup job
+         (DELETE WHERE expires_at < NOW(), REQ-F-011).
+         ================================================================ -->
+    <changeSet id="20250115000001-006" author="technical-architect-agent">
+        <createIndex tableName="idempotency_keys" indexName="idx_idempotency_expires_at">
+            <column name="expires_at"/>
+        </createIndex>
+
+        <rollback>
+            <dropIndex tableName="idempotency_keys" indexName="idx_idempotency_expires_at"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
