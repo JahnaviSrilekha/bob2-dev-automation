@@ -702,10 +702,10 @@
 
 **Dependencies:** US-008 (schema), US-001b (transaction records populated)
 **Definition of Done:**
-- [ ] All acceptance criteria pass
-- [ ] Sub-tasks complete
-- [ ] Code reviewed and merged
-- [ ] TC-IDs linked in RTM pass
+- [x] All acceptance criteria pass
+- [x] Sub-tasks complete
+- [x] Code reviewed and merged
+- [x] TC-IDs linked in RTM pass
 
 ---
 
