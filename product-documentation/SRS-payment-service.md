@@ -58,6 +58,7 @@ At the same time, the service must be operationally operable: support teams, fin
 - **Concurrency control:** Prevent lost updates and negative balances under concurrent access.
 - **Transaction status:** Allow callers to query the status of a previously submitted transfer.
 - **Reversal / void:** Support reversing a completed transfer (creates offsetting journal entries; does not mutate originals).
+- **Admin transaction view:** Allow admin users to retrieve a paginated, filterable view of all transactions across all accounts.
 
 ### 3.2 Out of Scope
 
@@ -176,6 +177,14 @@ The following capabilities are handled by separate microservices and are explici
 | REQ-F-025 | The system SHALL support reversing a COMPLETED transfer by creating offsetting journal entries (credit original sender, debit original receiver) in a new atomic transaction. | Must Have | Finance/Compliance |
 | REQ-F-026 | The system SHALL reject a reversal request if the target transfer is already in REVERSED or FAILED status. | Must Have | Finance/Compliance |
 | REQ-F-027 | The system SHALL link the reversal transaction to the original transaction ID in the ledger. | Must Have | BO-004, Finance/Compliance |
+
+### 4.9 Admin Transaction View
+
+| REQ-ID | Description | Priority | Source |
+|---|---|---|---|
+| REQ-F-028 | The system SHALL expose an endpoint that allows an admin user to retrieve a paginated list of all transactions across all accounts, ordered by timestamp descending by default. | Must Have | Finance/Compliance, Platform Engineering |
+| REQ-F-029 | The system SHALL restrict access to the admin transaction view endpoint to requests that present a valid admin role claim (e.g. `role=ADMIN` in the trusted `X-User-Role` header forwarded by the API Gateway). Non-admin requests SHALL receive HTTP 403 Forbidden. | Must Have | Security, Finance/Compliance |
+| REQ-F-030 | The system SHALL support filtering the admin transaction view by account ID, date range, and transaction status. | Should Have | Finance/Compliance |
 
 ---
 
@@ -359,6 +368,39 @@ The following capabilities are handled by separate microservices and are explici
 
 ---
 
+### US-011: Admin Views All Transactions
+
+**Story:** As an admin, I want to view all transactions across all accounts so that I can monitor platform activity, investigate disputes, and satisfy compliance requirements.
+
+**Linked REQ-IDs:** REQ-F-028, REQ-F-029, REQ-F-030
+
+#### Scenario 1: Admin retrieves paginated list of all transactions
+
+**Given** an authenticated request with `X-User-Role: ADMIN`
+**When** the admin calls `GET /v1/admin/transactions?page=1&pageSize=20`
+**Then** the API returns HTTP 200 OK with up to 20 transaction entries across all accounts, sorted by timestamp descending
+**And** the response includes pagination metadata (totalCount, page, pageSize, totalPages)
+
+#### Scenario 2: Admin filters by account ID
+
+**Given** an authenticated request with `X-User-Role: ADMIN`
+**When** the admin calls `GET /v1/admin/transactions?accountId={accountId}`
+**Then** only transactions involving the specified account are returned
+
+#### Scenario 3: Admin filters by date range and status
+
+**Given** an authenticated request with `X-User-Role: ADMIN`
+**When** the admin calls `GET /v1/admin/transactions?from=2024-01-01&to=2024-01-31&status=COMPLETED`
+**Then** only transactions with timestamps within January 2024 and status COMPLETED are returned
+
+#### Scenario 4: Non-admin request is rejected
+
+**Given** a request with no `X-User-Role` header or `X-User-Role: USER`
+**When** the caller calls `GET /v1/admin/transactions`
+**Then** the API returns HTTP 403 Forbidden with error code FORBIDDEN
+
+---
+
 ### US-007: Concurrent Transfers Do Not Corrupt Balances
 
 **Story:** As a platform engineer, I want the payment service to safely handle concurrent transfers involving the same account so that no balance is lost or duplicated under high concurrency.
@@ -457,3 +499,4 @@ The following capabilities are handled by separate microservices and are explici
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2025-01-15 | Product Owner Agent | Initial draft — full ISO/IEC/IEEE 29148:2018 SRS for Payment Service. |
+| 1.1 | 2025-01-15 | Product Owner Agent | Added REQ-F-028, REQ-F-029, REQ-F-030 (Admin Transaction View, section 4.9); added US-011 acceptance criteria; updated section 3.1 scope. |

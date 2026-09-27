@@ -1,9 +1,9 @@
 # Sprint Plan: Payment Service
 
-**SRS Reference:** SRS-20250115-001  
-**Backlog Reference:** BACKLOG-payment-service.md  
-**Total stories:** 10  **Total points:** 52  **Sprints required:** 2  
-**Team velocity:** 40 points/sprint  **Sprint duration:** 2 weeks  **Team size:** 3 developers  
+**SRS Reference:** SRS-20250115-001
+**Backlog Reference:** BACKLOG-payment-service.md
+**Total stories:** 11  **Total points:** 57  **Sprints required:** 2
+**Team velocity:** 40 points/sprint  **Sprint duration:** 2 weeks  **Team size:** 3 developers
 **Sprint start date basis:** 2025-02-03 (adjust to actual kickoff date)
 
 ---
@@ -13,7 +13,7 @@
 | Sprint | Goal Summary | Points Committed | Stories |
 |---|---|---|---|
 | Sprint 1 | Core money movement is live: transfers execute atomically with double-entry ledger, idempotency prevents duplicates, concurrency is safe, and balance inquiry is available | 36 | US-008, US-001a, US-001b, US-007, US-002, US-003, US-005, US-010 |
-| Sprint 2 | Full operational capability: transfers can be reversed, complete transaction history is queryable, and the service is observable and production-ready | 16 | US-006, US-004, US-009 |
+| Sprint 2 | Full operational capability: transfers can be reversed, complete transaction history is queryable, admins can view all transactions, and the service is observable and production-ready | 21 | US-006, US-004, US-009, US-011 |
 
 ---
 
@@ -64,11 +64,11 @@ By the end of Sprint 1, a caller can initiate a transfer that atomically debits 
 
 ## Sprint 2 (17 Feb – 28 Feb 2025)
 
-**Capacity:** 40 points  
-**Committed:** 16 points  
-**Remaining capacity:** 24 points
+**Capacity:** 40 points
+**Committed:** 21 points
+**Remaining capacity:** 19 points
 
-> **Note:** Sprint 2 is intentionally under-committed at 16 points. The 24-point buffer is reserved for:
+> **Note:** Sprint 2 remaining capacity (19 pts after US-011 addition) is reserved for:
 > - OQ-002 resolution (idempotency key retention policy may require a schema migration and TTL update to US-002 cleanup job)
 > - OQ-003 resolution (reversal authorisation — role-based access control on US-006 if required before GA)
 > - OQ-005 resolution (cursor-based pagination migration for US-004 if product decides before Sprint 2 kickoff)
@@ -80,9 +80,10 @@ By the end of Sprint 1, a caller can initiate a transfer that atomically debits 
 | US-006 | Reverse a Completed Transfer | 8 | EPIC-007 | US-008, US-001b, US-007 |
 | US-004 | Paginated Transaction History | 5 | EPIC-005 | US-008, US-001b |
 | US-009 | Service Observability & Health Endpoints | 3 | EPIC-001 | US-008 |
+| US-011 | Admin Views All Transactions | 5 | EPIC-008 | US-008, US-001b |
 
-**Sprint Goal:**  
-By the end of Sprint 2, the service is production-ready: finance team members can reverse completed transfers with full double-entry correctness, users can retrieve their complete paginated and filtered transaction history, and the service emits structured logs, distributed traces, and Kubernetes health probes required for safe deployment.
+**Sprint Goal:**
+By the end of Sprint 2, the service is production-ready: finance team members can reverse completed transfers with full double-entry correctness, users can retrieve their complete paginated and filtered transaction history, admins can view all platform transactions with role-based access control, and the service emits structured logs, distributed traces, and Kubernetes health probes required for safe deployment.
 
 **Story sequencing within sprint (recommended dev order):**
 
@@ -90,12 +91,14 @@ By the end of Sprint 2, the service is production-ready: finance team members ca
 |---|---|---|
 | Day 1–2 | Observability config (unblocks CI/production readiness early in sprint) | US-009 |
 | Day 2–4 | Transaction history (independent read path; can be developed in parallel) | US-004 |
-| Day 3–8 | Reversal (most complex story; requires US-001b + US-007 patterns) | US-006 |
+| Day 3–5 | Admin transaction view (independent read path; shares pagination pattern with US-004) | US-011 |
+| Day 4–9 | Reversal (most complex story; requires US-001b + US-007 patterns) | US-006 |
 | Day 9–10 | Integration test pass, coverage enforcement, OQ resolution items | Buffer |
 
 **Risks / flags:**
 - **OQ-003 (reversal authorisation)** must be resolved by Sprint 2 kickoff. If role-based restriction is required, US-006 adds an RBAC sub-task (~3h) that fits within the existing 8-point estimate if resolved early; if a new story is needed, it consumes buffer capacity.
 - **US-006 receiver-insufficient-balance scenario** requires the same pessimistic locking path as US-007 — ensure lock ordering is consistently applied to prevent new deadlock patterns during reversal.
+- **US-011 role guard**: the `X-User-Role` header is assumed trusted per ASM-001 (API Gateway forwards it); if the Gateway does not forward this header, an OQ must be raised to agree on the admin role claim mechanism before Sprint 2 kickoff.
 - **Coverage gate (REQ-NF-013 ≥ 90%)**: if Sprint 1 coverage is below target, Day 9–10 buffer must be used for test gap closure before Sprint 2 demo.
 
 ---
@@ -127,7 +130,8 @@ US-008 (schema foundation)
     │       ├── US-002 (idempotency — wraps transfer)
     │       ├── US-005 (transfer status — reads transactions table)
     │       ├── US-004 (history — reads ledger_entries table)
-    │       └── US-006 (reversal — extends ledger service)
+    │       ├── US-006 (reversal — extends ledger service)
+    │       └── US-011 (admin view — reads transactions table cross-account)
     ├── US-007 (concurrency locking)
     │       └── US-006 (reversal — reuses lock ordering)
     ├── US-003 (balance inquiry — reads accounts table)
@@ -149,7 +153,8 @@ All Sprint 1 Must-Have priorities are unblocked within Sprint 1 by the US-008 �
 | EPIC-005: Transaction History | US-004 | 5 | Sprint 2 |
 | EPIC-006: Transaction Status | US-005 | 3 | Sprint 1 |
 | EPIC-007: Transfer Reversal | US-006 | 8 | Sprint 2 |
-| **Total** | **10 stories** | **52 points** | **2 sprints** |
+| EPIC-008: Admin Transaction View | US-011 | 5 | Sprint 2 |
+| **Total** | **11 stories** | **57 points** | **2 sprints** |
 
 ---
 

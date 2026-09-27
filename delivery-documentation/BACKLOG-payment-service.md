@@ -19,7 +19,8 @@
 | EPIC-005: Transaction History | US-004 | 5 | Must Have / Should Have |
 | EPIC-006: Transaction Status | US-005 | 3 | Must Have |
 | EPIC-007: Transfer Reversal | US-006 | 8 | Must Have |
-| **Total** | **10 stories** | **52 points** | |
+| EPIC-008: Admin Transaction View | US-011 | 5 | Must Have |
+| **Total** | **11 stories** | **57 points** | |
 
 > **Note — US-001 SPLIT:** The original US-001 (Initiate a Transfer) was estimated at 13 points and must be split per the 13+ rule. It was decomposed into US-001a (Transfer API Endpoint & Validation, 5 pts) and US-001b (Double-Entry Ledger Persistence, 5 pts).
 
@@ -89,11 +90,21 @@
 
 ### EPIC-007: Transfer Reversal
 
-**Goal:** Allow finance team members to reverse a completed transfer by posting offsetting journal entries, correcting erroneous payments without mutating the original immutable ledger.  
-**REQ-IDs covered:** REQ-F-025, REQ-F-026, REQ-F-027, REQ-F-015, REQ-F-016, REQ-F-017  
-**Business Objective:** BO-004, BO-001  
-**Priority:** Must Have  
+**Goal:** Allow finance team members to reverse a completed transfer by posting offsetting journal entries, correcting erroneous payments without mutating the original immutable ledger.
+**REQ-IDs covered:** REQ-F-025, REQ-F-026, REQ-F-027, REQ-F-015, REQ-F-016, REQ-F-017
+**Business Objective:** BO-004, BO-001
+**Priority:** Must Have
 **Stories:** US-006
+
+---
+
+### EPIC-008: Admin Transaction View
+
+**Goal:** Provide admin users with a secure, paginated, filterable view of all transactions across every account so that platform operators and compliance officers can monitor activity and investigate disputes without requiring direct database access.
+**REQ-IDs covered:** REQ-F-028, REQ-F-029, REQ-F-030
+**Business Objective:** BO-004
+**Priority:** Must Have
+**Stories:** US-011
 
 ---
 
@@ -640,6 +651,56 @@
 | ST-004-06 | Write integration tests: 50-entry pagination, date-range filter, type filter, empty result | Test | ~3h |
 
 **Dependencies:** US-008 (schema), US-001b (ledger entries populated)  
+**Definition of Done:**
+- [ ] All acceptance criteria pass
+- [ ] Sub-tasks complete
+- [ ] Code reviewed and merged
+- [ ] TC-IDs linked in RTM pass
+
+---
+
+### EPIC-008: Admin Transaction View
+
+---
+
+### US-011: Admin Views All Transactions
+
+**Epic:** EPIC-008
+**REQ-IDs:** REQ-F-028, REQ-F-029, REQ-F-030
+**Story:** As an admin, I want to view all transactions across all accounts so that I can monitor platform activity, investigate disputes, and satisfy compliance requirements.
+
+**INVEST validation:**
+- Independent: Yes — read-only cross-account query; no write path; depends only on US-008 (schema) and existence of transaction data.
+- Negotiable: Yes — filter scope (account ID, date range, status) and response shape can be adjusted; role enforcement strategy (header vs. JWT claim) is configurable.
+- Valuable: Yes — compliance officers and platform engineers require this view to satisfy audit requirements and monitor platform health without direct DB access.
+- Estimable: Yes — mirrors US-004 (paginated history) plus role-based access guard; well-understood Spring patterns.
+- Small: Yes — 5 points; four acceptance scenarios.
+- Testable: Yes — role enforcement (403), pagination, and filter behaviour are all deterministic.
+
+**Vertical slice:** API (GET admin endpoint with query params + role guard) + Logic (cross-account filter specification, pagination) + DB (query on transactions table, optional composite index) + Test
+
+**Acceptance Criteria:**
+- Given a request with `X-User-Role: ADMIN`, when `GET /v1/admin/transactions?page=1&pageSize=20` is called, then HTTP 200 is returned with up to 20 transaction entries sorted by `requestTimestamp` descending, plus pagination metadata `{ totalCount, page, pageSize, totalPages }`.
+- Given a request with `X-User-Role: ADMIN`, when `GET /v1/admin/transactions?accountId={accountId}` is called, then only transactions involving that account are returned.
+- Given a request with `X-User-Role: ADMIN`, when `GET /v1/admin/transactions?from=2024-01-01&to=2024-01-31&status=COMPLETED` is called, then only COMPLETED transactions in January 2024 are returned.
+- Given a request with no `X-User-Role` header or `X-User-Role: USER`, when `GET /v1/admin/transactions` is called, then HTTP 403 Forbidden is returned with error code `FORBIDDEN`.
+
+**Story Point Estimate:** 5 points
+**Estimation rationale:**
+- Complexity drivers: Role-based access guard (header inspection), cross-account JPA Specification with optional accountId/date-range/status filters, pagination metadata in response envelope.
+- Risk/uncertainty: Low — same Spring Data JPA pagination pattern as US-004; role guard is a simple header check per ASM-001.
+- Comparable to: US-004 (Paginated Transaction History) — same pagination mechanics, wider scope (all accounts), plus a role enforcement layer.
+
+**Sub-tasks:**
+| ST-ID | Description | Layer | Estimate |
+|---|---|---|---|
+| ST-011-01 | Implement `AdminTransactionController` (`@GetMapping("/v1/admin/transactions")`) with role guard interceptor/filter checking `X-User-Role: ADMIN`; return HTTP 403 for non-admin callers | API | ~2h |
+| ST-011-02 | Implement `AdminTransactionSpecification` (Spring Data JPA `Specification<Transaction>`): optional `accountId` equals, optional `requestTimestamp` between, optional `status` equals | Logic | ~2h |
+| ST-011-03 | Implement `AdminTransactionService.getAllTransactions(AdminTransactionFilter filter, Pageable pageable)` using `TransactionRepository.findAll(spec, pageable)` | Logic | ~2h |
+| ST-011-04 | Write unit tests for `AdminTransactionSpecification`: no-filter, accountId-only, date-range-only, status-only, combined | Test | ~2h |
+| ST-011-05 | Write integration tests: admin role → paginated results, accountId filter, date+status filter, non-admin → 403, empty result | Test | ~3h |
+
+**Dependencies:** US-008 (schema), US-001b (transaction records populated)
 **Definition of Done:**
 - [ ] All acceptance criteria pass
 - [ ] Sub-tasks complete
