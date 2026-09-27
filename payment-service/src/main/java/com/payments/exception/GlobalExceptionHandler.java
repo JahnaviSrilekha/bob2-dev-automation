@@ -110,6 +110,24 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("IDEMPOTENCY_KEY_CONFLICT", ex.getMessage(), traceId()));
     }
 
+    @ExceptionHandler(TransferNotReversibleException.class)
+    public ResponseEntity<ErrorResponse> handleTransferNotReversible(TransferNotReversibleException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse("TRANSFER_NOT_REVERSIBLE", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(TransferAlreadyReversedException.class)
+    public ResponseEntity<ErrorResponse> handleTransferAlreadyReversed(TransferAlreadyReversedException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse("TRANSFER_ALREADY_REVERSED", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(InsufficientFundsForReversalException.class)
+    public ResponseEntity<ErrorResponse> handleInsufficientFundsForReversal(InsufficientFundsForReversalException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse("INSUFFICIENT_FUNDS_FOR_REVERSAL", ex.getMessage(), traceId()));
+    }
+
     // ── 503 Service Unavailable ───────────────────────────────────────────────
 
     @ExceptionHandler(DeadlockExhaustedException.class)
