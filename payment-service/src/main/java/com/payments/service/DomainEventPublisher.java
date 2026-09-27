@@ -26,12 +26,16 @@ public class DomainEventPublisher {
     private final String exchange;
     private final String completedRoutingKey;
 
+    private final String reversedRoutingKey;
+
     public DomainEventPublisher(RabbitTemplate rabbitTemplate,
                                 @Value("${app.rabbitmq.exchange:payments.topic}") String exchange,
-                                @Value("${app.rabbitmq.routing-key.completed:payment.completed}") String completedRoutingKey) {
+                                @Value("${app.rabbitmq.routing-key.completed:payment.completed}") String completedRoutingKey,
+                                @Value("${app.rabbitmq.routing-key.reversed:payment.reversed}") String reversedRoutingKey) {
         this.rabbitTemplate = rabbitTemplate;
         this.exchange = exchange;
         this.completedRoutingKey = completedRoutingKey;
+        this.reversedRoutingKey = reversedRoutingKey;
     }
 
     /**
@@ -51,6 +55,24 @@ public class DomainEventPublisher {
         }
     }
 
+    /**
+     * Registers an afterCommit hook to publish a PaymentReversedEvent.
+     * Guaranteed not to fire if the surrounding transaction rolls back.
+     * ST-006-03
+     */
+    public void publishReversedAfterCommit(PaymentReversedEvent event) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    doPublishReversed(event);
+                }
+            });
+        } else {
+            doPublishReversed(event);
+        }
+    }
+
     private void doPublish(PaymentCompletedEvent event) {
         try {
             rabbitTemplate.convertAndSend(exchange, completedRoutingKey, event);
@@ -59,6 +81,16 @@ public class DomainEventPublisher {
             // Log WARN — broker unavailable at commit time; manual re-publish tooling handles this (§11.4)
             log.warn("Failed to publish payment.completed event for transactionId={}: {}",
                     event.transactionId(), ex.getMessage());
+        }
+    }
+
+    private void doPublishReversed(PaymentReversedEvent event) {
+        try {
+            rabbitTemplate.convertAndSend(exchange, reversedRoutingKey, event);
+            log.debug("Published payment.reversed event for reversalTransactionId={}", event.reversalTransactionId());
+        } catch (Exception ex) {
+            log.warn("Failed to publish payment.reversed event for reversalTransactionId={}: {}",
+                    event.reversalTransactionId(), ex.getMessage());
         }
     }
 }

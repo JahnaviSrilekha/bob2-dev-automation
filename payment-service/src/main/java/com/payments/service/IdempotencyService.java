@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -166,6 +167,26 @@ public class IdempotencyService {
             return HexFormat.of().formatHex(bytes);
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 not available", ex);
+        }
+    }
+
+    /**
+     * Attempts to INSERT an idempotency key row in an isolated REQUIRES_NEW transaction.
+     * Returns true if the INSERT succeeded; false if a unique-constraint violation occurred.
+     * Running in REQUIRES_NEW ensures a constraint violation does not mark the outer
+     * transaction rollback-only (ADR-003).
+     * ST-002-02
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean tryInsert(String key, String hash) {
+        try {
+            IdempotencyKey record = new IdempotencyKey(
+                    key, hash, IdempotencyStatus.PENDING,
+                    Instant.now(), Instant.now().plusSeconds(ttlHours * 3600));
+            repository.saveAndFlush(record);
+            return true;
+        } catch (DataIntegrityViolationException ex) {
+            return false;
         }
     }
 

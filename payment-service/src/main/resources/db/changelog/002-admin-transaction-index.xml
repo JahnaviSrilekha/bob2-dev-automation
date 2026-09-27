@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!-- ST-011-01: index on transactions.created_at to support admin date-range queries -->
+    <changeSet id="20250115000002-001" author="payment-service">
+        <createIndex tableName="transactions" indexName="idx_transactions_created_at">
+            <column name="created_at" descending="true"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="transactions" indexName="idx_transactions_created_at"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
