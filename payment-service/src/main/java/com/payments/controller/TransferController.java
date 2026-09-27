@@ -1,11 +1,19 @@
 package com.payments.controller;
 
+import com.payments.dto.ErrorResponse;
 import com.payments.dto.ReversalResponse;
 import com.payments.dto.TransferRequest;
 import com.payments.dto.TransferResponse;
 import com.payments.service.IdempotencyService;
 import com.payments.service.ReversalService;
 import com.payments.service.TransferService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +30,7 @@ import java.util.UUID;
  * Idempotency gate fires before delegation to TransferService (REQ-F-007..F-011).
  * ST-001a-02, ST-006-01
  */
+@Tag(name = "Transfers", description = "Initiate, query, and reverse fund transfers")
 @RestController
 @RequestMapping("/v1/transfers")
 public class TransferController {
@@ -38,9 +47,29 @@ public class TransferController {
         this.reversalService = reversalService;
     }
 
+    @Operation(
+        summary     = "Initiate a transfer",
+        description = "Atomically debits the sender and credits the receiver. Requires a unique Idempotency-Key UUID header. Retrying with the same key returns the cached response without re-executing."
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Transfer completed",
+            content = @Content(schema = @Schema(implementation = TransferResponse.class))),
+        @ApiResponse(responseCode = "200", description = "Idempotent replay — original response returned",
+            content = @Content(schema = @Schema(implementation = TransferResponse.class))),
+        @ApiResponse(responseCode = "400", description = "Missing or invalid fields / missing Idempotency-Key",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "409", description = "Transfer with this key is still in progress",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "422", description = "Business rule violation (insufficient funds, self-transfer, key conflict)",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "503", description = "Deadlock retry budget exhausted",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @PostMapping
     public ResponseEntity<TransferResponse> initiateTransfer(
+            @Parameter(description = "UUID v4 idempotency key — must be unique per transfer attempt", required = true)
             @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Parameter(description = "Caller user ID (injected by API Gateway)", required = false)
             @RequestHeader(value = "X-User-Id", required = false, defaultValue = "") String userId,
             @Valid @RequestBody TransferRequest request) {
 
@@ -72,9 +101,23 @@ public class TransferController {
      * returns 422 TRANSFER_ALREADY_REVERSED (REQ-F-025, REQ-F-026).
      * ST-006-01
      */
+    @Operation(
+        summary     = "Reverse a completed transfer",
+        description = "Creates offsetting journal entries (credit original sender, debit original receiver). The original transaction status becomes REVERSED. Fails if status is not COMPLETED."
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "201", description = "Reversal executed",
+            content = @Content(schema = @Schema(implementation = ReversalResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Transaction not found",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "422", description = "Transfer not reversible, already reversed, or receiver has insufficient funds",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @PostMapping("/{transactionId}/reverse")
     public ResponseEntity<ReversalResponse> reverseTransfer(
+            @Parameter(description = "ID of the COMPLETED transaction to reverse", required = true)
             @PathVariable UUID transactionId,
+            @Parameter(description = "Caller user ID (injected by API Gateway)", required = false)
             @RequestHeader(value = "X-User-Id", required = false, defaultValue = "") String userId) {
 
         UUID userUuid = userId.isBlank() ? UUID.randomUUID() : UUID.fromString(userId);

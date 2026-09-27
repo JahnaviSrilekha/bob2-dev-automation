@@ -2,7 +2,16 @@ package com.payments.admin;
 
 import com.payments.domain.Transaction;
 import com.payments.domain.TransactionStatus;
+import com.payments.dto.ErrorResponse;
 import com.payments.dto.PagedAdminTransactionResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -22,6 +31,8 @@ import java.util.UUID;
  * that reach this method are already verified as ADMIN.
  * REQ-F-028, REQ-F-029, REQ-F-030 — ST-011-01
  */
+@Tag(name = "Admin", description = "Admin-only endpoints — requires X-User-Role: ADMIN header")
+@SecurityRequirement(name = "AdminRoleHeader")
 @RestController
 @RequestMapping("/v1/admin/transactions")
 public class AdminTransactionController {
@@ -32,14 +43,24 @@ public class AdminTransactionController {
         this.adminTransactionService = adminTransactionService;
     }
 
+    @Operation(
+        summary     = "List all transactions (admin)",
+        description = "Returns a paginated list of all transactions across all accounts. Requires X-User-Role: ADMIN header. All query parameters are optional — omitting them returns all transactions."
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Paginated transaction list returned",
+            content = @Content(schema = @Schema(implementation = PagedAdminTransactionResponse.class))),
+        @ApiResponse(responseCode = "403", description = "Caller is not an admin",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @GetMapping
     public ResponseEntity<PagedAdminTransactionResponse> getAllTransactions(
-            @RequestParam(required = false) UUID accountId,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
-            @RequestParam(required = false) TransactionStatus status,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
+            @Parameter(description = "Filter by account UUID (matches sender OR receiver)") @RequestParam(required = false) UUID accountId,
+            @Parameter(description = "Filter from this timestamp (ISO-8601 UTC, inclusive)") @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @Parameter(description = "Filter to this timestamp (ISO-8601 UTC, inclusive)")  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @Parameter(description = "Filter by status: PENDING | COMPLETED | FAILED | REVERSED") @RequestParam(required = false) TransactionStatus status,
+            @Parameter(description = "1-based page number (default: 1)") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "Page size (default: 20)") @RequestParam(defaultValue = "20") int pageSize) {
 
         AdminTransactionFilter filter = new AdminTransactionFilter(accountId, from, to, status);
         Pageable pageable = PageRequest.of(page - 1, pageSize,
